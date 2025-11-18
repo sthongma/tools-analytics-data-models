@@ -32,7 +32,7 @@ if sys.platform == 'win32':
 # ========================================
 
 # Data Source
-FILE_PATH = r'c:\Users\USER\Desktop\sthongma\tools-analytics-data-models\sample_data.xlsx'
+FILE_PATH = r"D:\Documents\Downloads\AllLiteDetailOrder20251118161848940.xlsx"
 SHEET_NAME = None  # None = sheet แรก, หรือใส่ชื่อ sheet / index
 SAMPLE_ROWS = None  # None = ทั้งหมด, หรือใส่จำนวนแถว
 
@@ -350,10 +350,16 @@ def print_classification_report(
     print('\n' + '=' * 80)
     print('SUMMARY')
     print('=' * 80)
-    print(f'Total columns: {len(classification["order_level"]) + len(classification["item_level"]) + len(classification["protected"])}')
-    print(f'  • Protected columns: {len(classification["protected"])}')
-    print(f'  • Order level: {len(classification["order_level"])} ({len(classification["order_level"]) / (len(classification["order_level"]) + len(classification["item_level"])) * 100:.1f}% of non-protected)')
-    print(f'  • Item level: {len(classification["item_level"])} ({len(classification["item_level"]) / (len(classification["order_level"]) + len(classification["item_level"])) * 100:.1f}% of non-protected)')
+    total_cols = len(classification["order_level"]) + len(classification["item_level"]) + len(classification["protected"])
+    print(f'Total columns: {total_cols}')
+    if total_cols > 0:
+        order_pct = len(classification["order_level"]) / total_cols * 100
+        item_pct = len(classification["item_level"]) / total_cols * 100
+        print(f'  • Order level: {len(classification["order_level"])} ({order_pct:.1f}% of total)')
+        print(f'  • Item level: {len(classification["item_level"])} ({item_pct:.1f}% of total)')
+        if classification['protected']:
+            protected_pct = len(classification["protected"]) / total_cols * 100
+            print(f'  • Protected columns: {len(classification["protected"])} ({protected_pct:.1f}% of total)')
     print('=' * 80 + '\n')
 
 
