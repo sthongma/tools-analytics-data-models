@@ -32,13 +32,14 @@ if sys.platform == 'win32':
 # ========================================
 
 # Data Source
-FILE_PATH = r'D:\Documents\Downloads\AllLiteDetailOrder20251114173910365.xlsx'
+FILE_PATH = r'c:\Users\USER\Desktop\sthongma\tools-analytics-data-models\sample_data.xlsx'
 SHEET_NAME = None  # None = sheet แรก, หรือใส่ชื่อ sheet / index
 SAMPLE_ROWS = None  # None = ทั้งหมด, หรือใส่จำนวนแถว
 
 # Analysis Settings
 SEARCH_KEY = 'หมายเลขออเดอร์ภายใน'  # คอลัมน์ที่ต้องการวิเคราะห์
 ANALYZE_MOST_DUPLICATED = True  # True = วิเคราะห์กลุ่มที่ซ้ำมากที่สุด, False = วิเคราะห์ทั้งหมด
+TOP_N = 10  # จำนวนรายการที่ต้องการวิเคราะห์เมื่อ ANALYZE_MOST_DUPLICATED = True
 PROTECTED_COLUMNS = []  # คอลัมน์ที่ต้องการยกเว้นจากการจัดกลุ่ม (จะแสดงแยกต่างหาก)
 
 # Processing Options
@@ -110,6 +111,33 @@ def find_most_duplicated_value(df: pd.DataFrame, search_key: str) -> Optional[Di
         'count': top_count,
         'row_indices': row_indices
     }
+
+
+def find_most_duplicated_values(df: pd.DataFrame, search_key: str, top_n: int = 10) -> List[Dict[str, Any]]:
+    """
+    หา TOP N ค่าใน search_key ที่มีจำนวนแถวมากที่สุด
+
+    Returns:
+        list of dicts with {'value': ..., 'count': ...}
+        or empty list if no duplicates found
+    """
+    grouped = df.groupby(search_key, dropna=False).size().sort_values(ascending=False)
+
+    if len(grouped) == 0:
+        return []
+
+    # ถ้าไม่มี duplicates ให้คืน TOP N ค่าทั้งหมด (ไม่ว่าจะซ้ำหรือไม่ซ้ำ)
+    top_n_actual = min(top_n, len(grouped))
+    top_values = grouped.head(top_n_actual)
+
+    results = []
+    for value, count in top_values.items():
+        results.append({
+            'value': value,
+            'count': int(count)
+        })
+
+    return results
 
 
 def get_subset_by_value(df: pd.DataFrame, search_key: str, value: Any) -> pd.DataFrame:
@@ -205,6 +233,59 @@ def print_header():
     print('=' * 80)
 
 
+def analyze_top_n_items(
+    df: pd.DataFrame,
+    search_key: str,
+    top_n_values: List[Dict[str, Any]],
+    protected_columns: List[str] = None
+) -> pd.DataFrame:
+    """
+    วิเคราะห์ TOP N รายการแยกกัน
+
+    Returns:
+        DataFrame with columns: SEARCH_KEY, COUNT_ORDER_LEVEL, COUNT_ITEM_LEVEL, UNIQUE_VALUES, NULL_VALUES
+    """
+    results = []
+
+    for item in top_n_values:
+        search_value = item['value']
+        # Filter df สำหรับ value นี้
+        df_subset = get_subset_by_value(df, search_key, search_value)
+
+        if len(df_subset) == 0:
+            continue
+
+        # Classify columns
+        classification = classify_columns(df_subset, protected_columns)
+
+        # นับ columns
+        count_order = len(classification['order_level'])
+        count_item = len(classification['item_level'])
+
+        # นับ unique values และ null values ทั้งหมด (รวมทุก column ที่ item_level)
+        total_unique = sum([col['unique_count'] for col in classification['item_level']])
+        total_null = sum([col['null_count'] for col in classification['item_level']])
+
+        results.append({
+            search_key: search_value,
+            'COUNT_ORDER_LEVEL': count_order,
+            'COUNT_ITEM_LEVEL': count_item,
+            'UNIQUE_VALUES': total_unique,
+            'NULL_VALUES': total_null
+        })
+
+    return pd.DataFrame(results)
+
+
+def print_top_n_summary(top_n_results: pd.DataFrame):
+    """แสดงตาราง TOP N ผลลัพธ์"""
+    print('\n' + '=' * 80)
+    print(f'TOP {len(top_n_results)} ANALYSIS RESULTS')
+    print('=' * 80)
+    print(top_n_results.to_string(index=False))
+    print('=' * 80 + '\n')
+
+
 def print_classification_report(
     classification: Dict[str, List[Dict[str, Any]]],
     analysis_scope: str,
@@ -288,27 +369,37 @@ def print_classification_report(
 def save_json_report(
     output_path: str,
     classification: Dict[str, List[Dict[str, Any]]],
-    metadata: Dict[str, Any]
+    metadata: Dict[str, Any],
+    top_n_results: Optional[pd.DataFrame] = None
 ):
-    """บันทึกรายงานเป็น JSON"""
+    """บันทึกรายงานเป็น JSON (เหลือแค่รายชื่อคอลัมน์)"""
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    # สกัดเฉพาะชื่อคอลัมน์
+    protected_cols = [col['column'] for col in classification['protected']]
+    order_level_cols = [col['column'] for col in classification['order_level']]
+    item_level_cols = [col['column'] for col in classification['item_level']]
 
     report = {
         'generated_at': datetime.now().isoformat(),
         'metadata': metadata,
         'results': {
-            'protected_columns': classification['protected'],
-            'order_level_columns': classification['order_level'],
-            'item_level_columns': classification['item_level'],
+            'protected_columns': protected_cols,
+            'order_level_columns': order_level_cols,
+            'item_level_columns': item_level_cols,
             'summary': {
-                'total_columns': len(classification['order_level']) + len(classification['item_level']) + len(classification['protected']),
-                'protected_count': len(classification['protected']),
-                'order_level_count': len(classification['order_level']),
-                'item_level_count': len(classification['item_level'])
+                'total_columns': len(order_level_cols) + len(item_level_cols) + len(protected_cols),
+                'protected_count': len(protected_cols),
+                'order_level_count': len(order_level_cols),
+                'item_level_count': len(item_level_cols)
             }
         }
     }
+
+    # เพิ่ม TOP N results ถ้ามี
+    if top_n_results is not None and len(top_n_results) > 0:
+        report['results']['top_n_analysis'] = top_n_results.to_dict(orient='records')
 
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2, default=str)
@@ -319,14 +410,16 @@ def save_json_report(
 def export_to_excel_detailed(
     output_path: str,
     classification: Dict[str, List[Dict[str, Any]]],
-    df_analyzed: pd.DataFrame
+    df_analyzed: pd.DataFrame,
+    top_n_results: Optional[pd.DataFrame] = None
 ):
     """
     บันทึกผลลัพธ์เป็น Excel โดยแยกเป็น sheets:
     - Summary: สรุปผลการวิเคราะห์
-    - OrderLevel: รายละเอียดคอลัมน์ Order Level
-    - ItemLevel: รายละเอียดคอลัมน์ Item Level
-    - Protected: รายละเอียดคอลัมน์ Protected
+    - TopN_Summary: ผลลัพธ์ TOP N (ถ้ามี)
+    - OrderLevel: รายชื่อคอลัมน์ Order Level
+    - ItemLevel: รายชื่อคอลัมน์ Item Level
+    - Protected: รายชื่อคอลัมน์ Protected
     - Data_OrderLevel: ข้อมูลจริงของคอลัมน์ Order Level
     - Data_ItemLevel: ข้อมูลจริงของคอลัมน์ Item Level
     """
@@ -346,14 +439,18 @@ def export_to_excel_detailed(
         }
         pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
 
-        # Protected columns detail
+        # TOP N Summary sheet (ถ้ามี)
+        if top_n_results is not None and len(top_n_results) > 0:
+            top_n_results.to_excel(writer, sheet_name='TopN_Summary', index=False)
+
+        # Protected columns list
         if classification['protected']:
-            df_protected = pd.DataFrame(classification['protected'])
+            df_protected = pd.DataFrame([{'column': col['column']} for col in classification['protected']])
             df_protected.to_excel(writer, sheet_name='Protected', index=False)
 
-        # Order level columns detail
+        # Order level columns list
         if classification['order_level']:
-            df_order = pd.DataFrame(classification['order_level'])
+            df_order = pd.DataFrame([{'column': col['column']} for col in classification['order_level']])
             df_order.to_excel(writer, sheet_name='OrderLevel', index=False)
 
             # Data - Order level columns
@@ -361,9 +458,9 @@ def export_to_excel_detailed(
             if order_cols:
                 df_analyzed[order_cols].to_excel(writer, sheet_name='Data_OrderLevel', index=False)
 
-        # Item level columns detail
+        # Item level columns list
         if classification['item_level']:
-            df_item = pd.DataFrame(classification['item_level'])
+            df_item = pd.DataFrame([{'column': col['column']} for col in classification['item_level']])
             df_item.to_excel(writer, sheet_name='ItemLevel', index=False)
 
             # Data - Item level columns
@@ -401,27 +498,39 @@ def main():
             else:
                 print(f'[OK] No full duplicate rows found')
 
-        # Step 3: Determine analysis scope
+        # Step 3: Determine analysis scope and analyze TOP N
         df_to_analyze = df
         analysis_scope = 'All data'
         search_value = None
+        top_n_results = None
 
         if ANALYZE_MOST_DUPLICATED and SEARCH_KEY:
-            print(f'\n[ANALYZING] Searching for most duplicated {SEARCH_KEY}...')
+            print(f'\n[ANALYZING] Searching for TOP {TOP_N} {SEARCH_KEY}...')
 
             if SEARCH_KEY not in df.columns:
                 print(f'[WARNING] SEARCH_KEY "{SEARCH_KEY}" not found in data')
                 print(f'[INFO] Analyzing all data instead')
             else:
-                top_search = find_most_duplicated_value(df, SEARCH_KEY)
+                top_n_values = find_most_duplicated_values(df, SEARCH_KEY, top_n=TOP_N)
 
-                if top_search:
-                    print(f'[OK] Found: {SEARCH_KEY} = {top_search["value"]} ({top_search["count"]:,} rows)')
-                    df_to_analyze = get_subset_by_value(df, SEARCH_KEY, top_search['value'])
-                    analysis_scope = f'{SEARCH_KEY} = {top_search["value"]}'
-                    search_value = top_search['value']
+                if top_n_values:
+                    print(f'[OK] Found {len(top_n_values)} items')
+                    for i, item in enumerate(top_n_values[:3], 1):
+                        print(f'     {i}. {SEARCH_KEY} = {item["value"]} ({item["count"]:,} rows)')
+                    if len(top_n_values) > 3:
+                        print(f'     ... and {len(top_n_values) - 3} more items')
+
+                    # Analyze TOP N items
+                    print(f'\n[ANALYZING] Analyzing TOP {len(top_n_values)} items separately...')
+                    top_n_results = analyze_top_n_items(df, SEARCH_KEY, top_n_values, PROTECTED_COLUMNS)
+                    print(f'[OK] Analysis complete')
+
+                    # Use first item for detailed analysis
+                    df_to_analyze = get_subset_by_value(df, SEARCH_KEY, top_n_values[0]['value'])
+                    analysis_scope = f'TOP {len(top_n_values)} {SEARCH_KEY} values (using first for detailed analysis)'
+                    search_value = top_n_values[0]['value']
                 else:
-                    print(f'[INFO] No duplicates found for {SEARCH_KEY}')
+                    print(f'[INFO] No items found for {SEARCH_KEY}')
                     print(f'[INFO] Analyzing all data instead')
 
         print(f'\n[ANALYZING] Scope: {analysis_scope}')
@@ -435,7 +544,11 @@ def main():
         print(f'     Order level: {len(classification["order_level"])} columns')
         print(f'     Item level: {len(classification["item_level"])} columns')
 
-        # Step 5: Print report
+        # Step 5: Print TOP N summary
+        if top_n_results is not None and len(top_n_results) > 0:
+            print_top_n_summary(top_n_results)
+
+        # Step 6: Print detailed report
         print_classification_report(
             classification,
             analysis_scope,
@@ -443,7 +556,7 @@ def main():
             show_samples=SHOW_SAMPLE_VALUES
         )
 
-        # Step 6: Export results
+        # Step 7: Export results
         base_path = Path(FILE_PATH).parent
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -463,12 +576,12 @@ def main():
         if SAVE_JSON_REPORT:
             json_filename = f'column_classification_{timestamp}.json'
             json_path = base_path / json_filename
-            save_json_report(str(json_path), classification, metadata)
+            save_json_report(str(json_path), classification, metadata, top_n_results)
 
         if EXPORT_TO_EXCEL:
             excel_filename = f'column_classification_{timestamp}.xlsx'
             excel_path = base_path / excel_filename
-            export_to_excel_detailed(str(excel_path), classification, df_to_analyze)
+            export_to_excel_detailed(str(excel_path), classification, df_to_analyze, top_n_results)
 
         print('\n[COMPLETE] Column classification finished!\n')
 
