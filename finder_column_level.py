@@ -20,12 +20,15 @@ import json
 from datetime import datetime
 import sys
 import io
+import warnings
 
 # Fix encoding for Windows console
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
+# Suppress warnings for cleaner output
+warnings.simplefilter(action='ignore', category=UserWarning)
 
 # ========================================
 # 📋 CONFIGURATION
@@ -290,23 +293,7 @@ def print_classification_report(
     print('=' * 80)
     print(f'Scope: {analysis_scope}')
     print(f'Total rows analyzed: {total_rows:,}')
-    print(f'Total columns: {len(classification["order_level"]) + len(classification["item_level"]) + len(classification["protected"])}')
-
-    # Protected Columns
-    if classification['protected']:
-        print('\n' + '=' * 80)
-        print(f'🔒 PROTECTED COLUMNS: {len(classification["protected"])} columns')
-        print('=' * 80)
-        print('These columns are protected and shown separately')
-        print('-' * 80)
-
-        for col_info in classification['protected']:
-            print(f'\n• {col_info["column"]}')
-            print(f'  Unique values: {col_info["unique_count"]:,}')
-            print(f'  NULL values: {col_info["null_count"]:,} ({col_info["null_percentage"]:.2f}%)')
-            if show_samples and col_info.get('sample_values'):
-                sample_str = format_sample_values(col_info['sample_values'])
-                print(f'  Sample: {sample_str}')
+    print(f'Total columns: {len(classification["order_level"]) + len(classification["item_level"])}')
 
     # Order Level Columns
     print('\n' + '=' * 80)
@@ -350,16 +337,13 @@ def print_classification_report(
     print('\n' + '=' * 80)
     print('SUMMARY')
     print('=' * 80)
-    total_cols = len(classification["order_level"]) + len(classification["item_level"]) + len(classification["protected"])
+    total_cols = len(classification["order_level"]) + len(classification["item_level"])
     print(f'Total columns: {total_cols}')
     if total_cols > 0:
         order_pct = len(classification["order_level"]) / total_cols * 100
         item_pct = len(classification["item_level"]) / total_cols * 100
         print(f'  • Order level: {len(classification["order_level"])} ({order_pct:.1f}% of total)')
         print(f'  • Item level: {len(classification["item_level"])} ({item_pct:.1f}% of total)')
-        if classification['protected']:
-            protected_pct = len(classification["protected"]) / total_cols * 100
-            print(f'  • Protected columns: {len(classification["protected"])} ({protected_pct:.1f}% of total)')
     print('=' * 80 + '\n')
 
 
@@ -416,7 +400,6 @@ def export_to_excel_detailed(
     - TopN_Summary: ผลลัพธ์ TOP N (ถ้ามี)
     - OrderLevel: รายชื่อคอลัมน์ Order Level
     - ItemLevel: รายชื่อคอลัมน์ Item Level
-    - Protected: รายชื่อคอลัมน์ Protected
     - Data_OrderLevel: ข้อมูลจริงของคอลัมน์ Order Level
     - Data_ItemLevel: ข้อมูลจริงของคอลัมน์ Item Level
     """
@@ -425,13 +408,13 @@ def export_to_excel_detailed(
 
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
         # Summary sheet
+        total_cols = len(classification['order_level']) + len(classification['item_level'])
         summary_data = {
-            'Category': ['Protected Columns', 'Order Level Columns', 'Item Level Columns', 'Total Columns'],
+            'Category': ['Order Level Columns', 'Item Level Columns', 'Total Columns'],
             'Count': [
-                len(classification['protected']),
                 len(classification['order_level']),
                 len(classification['item_level']),
-                len(classification['protected']) + len(classification['order_level']) + len(classification['item_level'])
+                total_cols
             ]
         }
         pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
@@ -439,11 +422,6 @@ def export_to_excel_detailed(
         # TOP N Summary sheet (ถ้ามี)
         if top_n_results is not None and len(top_n_results) > 0:
             top_n_results.to_excel(writer, sheet_name='TopN_Summary', index=False)
-
-        # Protected columns list
-        if classification['protected']:
-            df_protected = pd.DataFrame([{'column': col['column']} for col in classification['protected']])
-            df_protected.to_excel(writer, sheet_name='Protected', index=False)
 
         # Order level columns list
         if classification['order_level']:
@@ -537,7 +515,6 @@ def main():
         print(f'\n[CLASSIFYING] Analyzing columns...')
         classification = classify_columns(df_to_analyze, [])
         print(f'[OK] Classification complete')
-        print(f'     Protected: {len(classification["protected"])} columns')
         print(f'     Order level: {len(classification["order_level"])} columns')
         print(f'     Item level: {len(classification["item_level"])} columns')
 
