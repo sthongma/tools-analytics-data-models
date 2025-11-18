@@ -236,7 +236,8 @@ def analyze_top_n_items(
     วิเคราะห์ TOP N รายการแยกกัน
 
     Returns:
-        DataFrame with columns: SEARCH_KEY, COUNT_ORDER_LEVEL, COUNT_ITEM_LEVEL, UNIQUE_VALUES, NULL_VALUES
+        DataFrame with columns: SEARCH_KEY, COUNT_ORDER_LEVEL, COUNT_ITEM_LEVEL,
+        UNIQUE_[Col1], NULL_[Col1], UNIQUE_[Col2], NULL_[Col2], ...
     """
     protected_columns = protected_columns or []
     results = []
@@ -256,17 +257,20 @@ def analyze_top_n_items(
         count_order = len(classification['order_level'])
         count_item = len(classification['item_level'])
 
-        # นับ unique values และ null values ทั้งหมด (รวมทุก column ที่ item_level)
-        total_unique = sum([col['unique_count'] for col in classification['item_level']])
-        total_null = sum([col['null_count'] for col in classification['item_level']])
-
-        results.append({
+        # สร้าง row ผลลัพธ์
+        row = {
             search_key: search_value,
             'COUNT_ORDER_LEVEL': count_order,
-            'COUNT_ITEM_LEVEL': count_item,
-            'UNIQUE_VALUES': total_unique,
-            'NULL_VALUES': total_null
-        })
+            'COUNT_ITEM_LEVEL': count_item
+        }
+
+        # เพิ่ม UNIQUE_ และ NULL_ สำหรับแต่ละ item-level column
+        for col_info in classification['item_level']:
+            col_name = col_info['column']
+            row[f'UNIQUE_{col_name}'] = col_info['unique_count']
+            row[f'NULL_{col_name}'] = col_info['null_count']
+
+        results.append(row)
 
     return pd.DataFrame(results)
 
@@ -391,7 +395,6 @@ def save_json_report(
 def export_to_excel_detailed(
     output_path: str,
     classification: Dict[str, List[Dict[str, Any]]],
-    df_analyzed: pd.DataFrame,
     top_n_results: Optional[pd.DataFrame] = None
 ):
     """
@@ -400,8 +403,6 @@ def export_to_excel_detailed(
     - TopN_Summary: ผลลัพธ์ TOP N (ถ้ามี)
     - OrderLevel: รายชื่อคอลัมน์ Order Level
     - ItemLevel: รายชื่อคอลัมน์ Item Level
-    - Data_OrderLevel: ข้อมูลจริงของคอลัมน์ Order Level
-    - Data_ItemLevel: ข้อมูลจริงของคอลัมน์ Item Level
     """
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -428,20 +429,10 @@ def export_to_excel_detailed(
             df_order = pd.DataFrame([{'column': col['column']} for col in classification['order_level']])
             df_order.to_excel(writer, sheet_name='OrderLevel', index=False)
 
-            # Data - Order level columns
-            order_cols = [c['column'] for c in classification['order_level']]
-            if order_cols:
-                df_analyzed[order_cols].to_excel(writer, sheet_name='Data_OrderLevel', index=False)
-
         # Item level columns list
         if classification['item_level']:
             df_item = pd.DataFrame([{'column': col['column']} for col in classification['item_level']])
             df_item.to_excel(writer, sheet_name='ItemLevel', index=False)
-
-            # Data - Item level columns
-            item_cols = [c['column'] for c in classification['item_level']]
-            if item_cols:
-                df_analyzed[item_cols].to_excel(writer, sheet_name='Data_ItemLevel', index=False)
 
     print(f'[SAVED] Excel report: {path}')
 
@@ -554,7 +545,7 @@ def main():
         if EXPORT_TO_EXCEL:
             excel_filename = f'column_classification_{timestamp}.xlsx'
             excel_path = base_path / excel_filename
-            export_to_excel_detailed(str(excel_path), classification, df_to_analyze, top_n_results)
+            export_to_excel_detailed(str(excel_path), classification, top_n_results)
 
         print('\n[COMPLETE] Column classification finished!\n')
 

@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python finder_column_level.py:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []
