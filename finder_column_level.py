@@ -38,9 +38,7 @@ SAMPLE_ROWS = None  # None = ทั้งหมด, หรือใส่จำ�
 
 # Analysis Settings
 SEARCH_KEY = 'หมายเลขออเดอร์ภายใน'  # คอลัมน์ที่ต้องการวิเคราะห์
-ANALYZE_MOST_DUPLICATED = True  # True = วิเคราะห์กลุ่มที่ซ้ำมากที่สุด, False = วิเคราะห์ทั้งหมด
-TOP_N = 10  # จำนวนรายการที่ต้องการวิเคราะห์เมื่อ ANALYZE_MOST_DUPLICATED = True
-PROTECTED_COLUMNS = []  # คอลัมน์ที่ต้องการยกเว้นจากการจัดกลุ่ม (จะแสดงแยกต่างหาก)
+TOP_N = 10  # จำนวนรายการที่ต้องการวิเคราะห์
 
 # Processing Options
 DROP_FULL_DUPLICATES = True  # ลบแถวที่ซ้ำทั้งแถวก่อนวิเคราะห์
@@ -48,7 +46,6 @@ DROP_FULL_DUPLICATES = True  # ลบแถวที่ซ้ำทั้งแ�
 # Export Options
 SAVE_JSON_REPORT = True  # บันทึกรายงานเป็น JSON
 EXPORT_TO_EXCEL = True  # บันทึกผลลัพธ์เป็น Excel (แยก sheet: order_level, item_level)
-SHOW_SAMPLE_VALUES = True  # แสดงตัวอย่างค่าของแต่ละคอลัมน์
 
 
 # ========================================
@@ -504,7 +501,7 @@ def main():
         search_value = None
         top_n_results = None
 
-        if ANALYZE_MOST_DUPLICATED and SEARCH_KEY:
+        if SEARCH_KEY:
             print(f'\n[ANALYZING] Searching for TOP {TOP_N} {SEARCH_KEY}...')
 
             if SEARCH_KEY not in df.columns:
@@ -522,7 +519,7 @@ def main():
 
                     # Analyze TOP N items
                     print(f'\n[ANALYZING] Analyzing TOP {len(top_n_values)} items separately...')
-                    top_n_results = analyze_top_n_items(df, SEARCH_KEY, top_n_values, PROTECTED_COLUMNS)
+                    top_n_results = analyze_top_n_items(df, SEARCH_KEY, top_n_values, [])
                     print(f'[OK] Analysis complete')
 
                     # Use first item for detailed analysis
@@ -538,7 +535,7 @@ def main():
 
         # Step 4: Classify columns
         print(f'\n[CLASSIFYING] Analyzing columns...')
-        classification = classify_columns(df_to_analyze, PROTECTED_COLUMNS)
+        classification = classify_columns(df_to_analyze, [])
         print(f'[OK] Classification complete')
         print(f'     Protected: {len(classification["protected"])} columns')
         print(f'     Order level: {len(classification["order_level"])} columns')
@@ -553,7 +550,7 @@ def main():
             classification,
             analysis_scope,
             len(df_to_analyze),
-            show_samples=SHOW_SAMPLE_VALUES
+            show_samples=True
         )
 
         # Step 7: Export results
@@ -569,7 +566,6 @@ def main():
             'analysis_scope': analysis_scope,
             'search_key': SEARCH_KEY,
             'search_value': str(search_value) if search_value is not None else None,
-            'protected_columns': PROTECTED_COLUMNS,
             'drop_full_duplicates': DROP_FULL_DUPLICATES
         }
 
