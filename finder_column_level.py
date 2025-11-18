@@ -47,6 +47,12 @@ DROP_FULL_DUPLICATES = True  # ลบแถวที่ซ้ำทั้งแ�
 SAVE_JSON_REPORT = True  # บันทึกรายงานเป็น JSON
 EXPORT_TO_EXCEL = True  # บันทึกผลลัพธ์เป็น Excel (แยก sheet: order_level, item_level)
 
+# Display Settings
+MAX_SAMPLE_VALUES = 5          # จำนวน sample values ที่จะดึงจากคอลัมน์
+MAX_DISPLAY_SAMPLES = 3        # จำนวน sample values ที่จะแสดงผล
+MAX_VALUE_DISPLAY_LENGTH = 50  # ความยาวสูงสุดของค่าที่แสดง
+MAX_SAMPLE_VALUE_LENGTH = 100  # ความยาวสูงสุดของ sample value
+
 
 # ========================================
 # 🔧 DATA LOADING
@@ -78,36 +84,28 @@ def load_data(file_path: str, sheet_name: Optional[str] = None, sample_rows: Opt
 # 🔍 CORE ANALYSIS FUNCTIONS
 # ========================================
 
-def find_most_duplicated_value(df: pd.DataFrame, search_key: str) -> Optional[Dict[str, Any]]:
-    """
-    หาค่าใน search_key ที่มีจำนวนแถวมากที่สุด (TOP 1)
+def create_value_mask(series: pd.Series, value: Any) -> pd.Series:
+    """สร้าง boolean mask สำหรับค้นหาค่า (จัดการ null/non-null)"""
+    if pd.isnull(value):
+        return series.isnull()
+    return series == value
 
-    Returns:
-        dict with {'value': ..., 'count': ..., 'row_indices': [...]}
-        or None if all values appear only once
-    """
-    grouped = df.groupby(search_key, dropna=False).size()
-    duplicates = grouped[grouped > 1]
 
-    if len(duplicates) == 0:
-        return None
+def extract_sample_values(series: pd.Series, count: int = MAX_SAMPLE_VALUES, unique_only: bool = False) -> List[Any]:
+    """ดึง sample values จากคอลัมน์"""
+    dropped = series.dropna()
+    if unique_only:
+        return dropped.unique()[:count].tolist()
+    return dropped.head(count).tolist()
 
-    top_1 = duplicates.nlargest(1)
-    top_value = top_1.index[0]
-    top_count = int(top_1.iloc[0])
 
-    if pd.isnull(top_value):
-        mask = df[search_key].isnull()
-    else:
-        mask = df[search_key] == top_value
-
-    row_indices = df[mask].index.tolist()
-
-    return {
-        'value': top_value,
-        'count': top_count,
-        'row_indices': row_indices
-    }
+def format_sample_values(values: List[Any], max_display: int = MAX_DISPLAY_SAMPLES, max_length: int = MAX_VALUE_DISPLAY_LENGTH) -> str:
+    """format list of values สำหรับแสดงผล"""
+    truncated = [str(v)[:max_length] for v in values[:max_display]]
+    result = ', '.join(truncated)
+    if len(values) > max_display:
+        result += "..."
+    return result
 
 
 def find_most_duplicated_values(df: pd.DataFrame, search_key: str, top_n: int = 10) -> List[Dict[str, Any]]:
@@ -139,10 +137,7 @@ def find_most_duplicated_values(df: pd.DataFrame, search_key: str, top_n: int = 
 
 def get_subset_by_value(df: pd.DataFrame, search_key: str, value: Any) -> pd.DataFrame:
     """ดึงแถวที่มี search_key = value"""
-    if pd.isnull(value):
-        mask = df[search_key].isnull()
-    else:
-        mask = df[search_key] == value
+    mask = create_value_mask(df[search_key], value)
     return df[mask].copy()
 
 
@@ -166,9 +161,7 @@ def classify_columns(df_subset: pd.DataFrame, protected_columns: List[str] = Non
             ]
         }
     """
-    if protected_columns is None:
-        protected_columns = []
-
+    protected_columns = protected_columns or []
     protected_set = set(protected_columns)
     order_level = []
     item_level = []
@@ -192,7 +185,7 @@ def classify_columns(df_subset: pd.DataFrame, protected_columns: List[str] = Non
         # Protected columns
         if col in protected_set:
             # เพิ่มตัวอย่างค่า
-            sample_values = df_subset[col].dropna().head(5).tolist()
+            sample_values = extract_sample_values(df_subset[col], count=MAX_SAMPLE_VALUES)
             col_info['sample_values'] = sample_values
             protected.append(col_info)
             continue
@@ -205,7 +198,7 @@ def classify_columns(df_subset: pd.DataFrame, protected_columns: List[str] = Non
             order_level.append(col_info)
         else:
             # Item level - ค่าต่างกัน
-            sample_values = df_subset[col].dropna().unique()[:5].tolist()
+            sample_values = extract_sample_values(df_subset[col], count=MAX_SAMPLE_VALUES, unique_only=True)
             col_info['sample_values'] = sample_values
             col_info['coverage_percentage'] = float(unique_count / total_rows * 100)  # % ของ unique values
             item_level.append(col_info)
@@ -242,6 +235,7 @@ def analyze_top_n_items(
     Returns:
         DataFrame with columns: SEARCH_KEY, COUNT_ORDER_LEVEL, COUNT_ITEM_LEVEL, UNIQUE_VALUES, NULL_VALUES
     """
+    protected_columns = protected_columns or []
     results = []
 
     for item in top_n_values:
@@ -311,8 +305,8 @@ def print_classification_report(
             print(f'  Unique values: {col_info["unique_count"]:,}')
             print(f'  NULL values: {col_info["null_count"]:,} ({col_info["null_percentage"]:.2f}%)')
             if show_samples and col_info.get('sample_values'):
-                sample_str = ', '.join([str(v)[:50] for v in col_info['sample_values'][:3]])
-                print(f'  Sample: {sample_str}{"..." if len(col_info["sample_values"]) > 3 else ""}')
+                sample_str = format_sample_values(col_info['sample_values'])
+                print(f'  Sample: {sample_str}')
 
     # Order Level Columns
     print('\n' + '=' * 80)
@@ -326,7 +320,7 @@ def print_classification_report(
         for col_info in classification['order_level']:
             print(f'\n• {col_info["column"]}')
             if show_samples:
-                value_display = str(col_info['sample_value'])[:100]
+                value_display = str(col_info['sample_value'])[:MAX_SAMPLE_VALUE_LENGTH]
                 print(f'  Value: {value_display}')
             if col_info['null_count'] > 0:
                 print(f'  NULL values: {col_info["null_count"]:,} ({col_info["null_percentage"]:.2f}%)')
@@ -347,8 +341,8 @@ def print_classification_report(
             print(f'  Unique values: {col_info["unique_count"]:,} ({col_info["coverage_percentage"]:.2f}% coverage)')
             print(f'  NULL values: {col_info["null_count"]:,} ({col_info["null_percentage"]:.2f}%)')
             if show_samples and col_info.get('sample_values'):
-                sample_str = ', '.join([str(v)[:50] for v in col_info['sample_values'][:3]])
-                print(f'  Sample: {sample_str}{"..." if len(col_info["sample_values"]) > 3 else ""}')
+                sample_str = format_sample_values(col_info['sample_values'])
+                print(f'  Sample: {sample_str}')
     else:
         print('(none)')
 
